@@ -16,6 +16,7 @@ adb_serial = ""
 # Extra scrcpy flags. Some ideas:
 #   "--turn-screen-off"      keep the phone's own screen dark while mirroring
 #   "--new-display"          open in a separate virtual display (phone screen untouched)
-#   "--max-size=1600"        cap resolution for a smoother Wi-Fi stream
-#   "--window-height=750"    smaller window (default fills the screen height; width follows)
+#   "--max-size=750"         smaller window (default fills the screen height). Prefer this
+#                            over --window-height: the phone sends video at that size, so
+#                            text stays sharp instead of being scaled down on the desktop.
 scrcpy_args = ["--stay-awake"]
