@@ -1,0 +1,30 @@
+# Maintainer: draumaz
+pkgname=kdeconnect-scrcpy-git
+_pkgname=kdeconnect-scrcpy
+pkgver=r0
+pkgrel=1
+pkgdesc="Click Open on a KDE Connect phone notification to get a controllable scrcpy mirror of that app"
+arch=('any')
+url="https://github.com/draumaz/kdeconnect-scrcpy"
+license=('GPL-3.0-or-later')
+depends=('python' 'python-dbus' 'python-gobject' 'kdeconnect' 'scrcpy' 'android-tools')
+makedepends=('git')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+install=kdeconnect-scrcpy.install
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 kdeconnect-scrcpy "$pkgdir/usr/bin/kdeconnect-scrcpy"
+  sed 's|^ExecStart=.*|ExecStart=/usr/bin/kdeconnect-scrcpy|' kdeconnect-scrcpy.service |
+    install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/kdeconnect-scrcpy.service"
+  install -Dm644 config.example.toml "$pkgdir/usr/share/doc/$_pkgname/config.example.toml"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+}

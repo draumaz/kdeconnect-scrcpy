@@ -47,6 +47,12 @@ phone app ──► KDE Connect (Android) ──► kdeconnectd ──D-Bus─�
 ./install.sh --uninstall
 ```
 
+On Arch, build the package instead (it prints the remaining setup steps when installed):
+
+```sh
+cd packaging/arch && makepkg -si
+```
+
 Settings live in `~/.config/kdeconnect-scrcpy/config.toml` (see `config.example.toml`).
 Logs: `journalctl --user -u kdeconnect-scrcpy -f`.
 
