@@ -146,13 +146,21 @@ class Mirror:
         self.app = app
         self.procs = {}
         self.lock = threading.Lock()
+        self.started = False
+        self.on_exit = None
 
     def open(self, device_name, addresses, package):
+        self.started = True
         threading.Thread(
             target=self._open, args=(device_name, addresses, package), daemon=True
         ).start()
 
-    def _open(self, device_name, addresses, package):
+    def _open(self, *args):
+        self._run(*args)
+        if self.on_exit:
+            GLib.idle_add(self.on_exit)
+
+    def _run(self, device_name, addresses, package):
         cfg = self.app.cfg
         serial = find_adb_serial(cfg, addresses)
         if not serial:
@@ -322,14 +330,44 @@ class App:
             self.by_phone.pop(info["key"], None)
 
 
+def send_test(app, package, loop):
+    """Post a fake phone notification for `package`, handle its Open, exit."""
+    devices = app.bus.get_object(KDECONNECT, "/modules/kdeconnect").devices(
+        True, True, signature="bb", dbus_interface="org.kde.kdeconnect.daemon")
+    if not devices:
+        sys.exit("no reachable KDE Connect device")
+    dev = str(devices[0])
+    name, addresses = app.device_info(dev)
+
+    nid = int(app.notifier.Notify(
+        package, dbus.UInt32(0), "smartphone", "Test notification",
+        f"Click Open to mirror {name} into {package}",
+        ["default", "Open", "open", "Open"],
+        {"x-kde-origin-name": dbus.String(name)}, -1))
+    app.by_desktop[nid] = {"key": (dev, "test"), "path": "", "package": package,
+                           "device": name, "addresses": addresses}
+
+    def done(closed_id, *_):
+        if int(closed_id) == nid and not app.mirror.started:
+            loop.quit()
+    app.bus.add_signal_receiver(done, signal_name="NotificationClosed",
+                                dbus_interface=FDN, path=FDN_PATH)
+    # Stay alive while a mirror we started is running.
+    app.mirror.on_exit = loop.quit
+
+
 def main():
     for tool in ("adb", "scrcpy"):
         if not shutil.which(tool):
             log(f"warning: `{tool}` not found in PATH")
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-    App()
-    log("listening for KDE Connect notifications…")
-    GLib.MainLoop().run()
+    app = App()
+    loop = GLib.MainLoop()
+    if len(sys.argv) == 3 and sys.argv[1] == "--test":
+        send_test(app, sys.argv[2], loop)
+    else:
+        log("listening for KDE Connect notifications…")
+    loop.run()
 
 
 if __name__ == "__main__":

@@ -50,6 +50,13 @@ phone app ──► KDE Connect (Android) ──► kdeconnectd ──D-Bus─�
 Settings live in `~/.config/kdeconnect-scrcpy/config.toml` (see `config.example.toml`).
 Logs: `journalctl --user -u kdeconnect-scrcpy -f`.
 
+To try it without waiting for a real notification, post a fake one for any app
+(ADB can't post notifications on behalf of other apps, so this is done on the desktop side):
+
+```sh
+kdeconnect-scrcpy --test com.twitter.android
+```
+
 ## Limitations
 
 - Clicking Open opens the *app*, not the exact chat or post. Android doesn't let ADB
