@@ -1,6 +1,6 @@
 # kdeconnect-scrcpy
 
-iPhone Mirroring–style phone notifications for KDE Plasma. A notification from your
+Tap-through phone notifications for KDE Plasma. A notification from your
 Android phone arrives through KDE Connect, you click **Open**, and a scrcpy window
 opens with your phone's screen, already in the app that sent it. You can control
 the phone from that window with your mouse and keyboard.
