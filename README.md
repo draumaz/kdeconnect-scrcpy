@@ -1,9 +1,11 @@
 # kdeconnect-scrcpy
 
-Tap-through phone notifications for KDE Plasma. A notification from your
-Android phone arrives through KDE Connect, you click **Open**, and a scrcpy window
-opens with your phone's screen, already in the app that sent it. You can control
-the phone from that window with your mouse and keyboard.
+Open your Android phone on your KDE Plasma desktop, straight from a notification.
+
+When a phone notification arrives through KDE Connect, click **Open** and a live
+scrcpy stream of your phone pops up, already in the app that sent it. You can use
+the phone from that window with your mouse and keyboard: tap, scroll, type and reply
+without picking it up.
 
 ## How it works
 

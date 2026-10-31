@@ -1,7 +1,7 @@
 # Maintainer: draumaz
 pkgname=kdeconnect-scrcpy-git
 _pkgname=kdeconnect-scrcpy
-pkgver=r0
+pkgver=r8.932bc77
 pkgrel=1
 pkgdesc="Click Open on a KDE Connect phone notification to get a controllable scrcpy mirror of that app"
 arch=('any')
