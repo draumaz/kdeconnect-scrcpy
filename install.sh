@@ -10,12 +10,23 @@ restore_popups() {
     kwriteconfig6 --file kdeconnect.notifyrc --group Event/notification --key Action --delete
 }
 
+# kdeconnectd only reads its notification settings at startup, and ignores
+# kquitapp6. Stop it and let D-Bus activation start it again.
+restart_kdeconnect() {
+    pgrep -x kdeconnectd >/dev/null || return 0
+    pkill -x kdeconnectd
+    sleep 1
+    busctl --user call org.kde.kdeconnect /modules/kdeconnect \
+        org.freedesktop.DBus.Peer Ping >/dev/null 2>&1 || (kdeconnectd >/dev/null 2>&1 &)
+}
+
 if [ "$1" = "--uninstall" ]; then
     systemctl --user disable --now kdeconnect-scrcpy.service 2>/dev/null || true
     rm -f ~/.local/bin/kdeconnect-scrcpy ~/.config/systemd/user/kdeconnect-scrcpy.service
     systemctl --user daemon-reload
     restore_popups
-    echo "Uninstalled. Restart KDE Connect (or log out and back in) to get its popups back."
+    restart_kdeconnect
+    echo "Uninstalled. KDE Connect's own popups are back."
     exit 0
 fi
 
@@ -32,6 +43,7 @@ install -Dm644 kdeconnect-scrcpy.service ~/.config/systemd/user/kdeconnect-scrcp
 if [ "$1" != "--keep-popups" ]; then
     # Turn off KDE Connect's own popup for phone notifications so you don't get two.
     kwriteconfig6 --file kdeconnect.notifyrc --group Event/notification --key Action ""
+    restart_kdeconnect
     echo "Turned off KDE Connect's duplicate popups (System Settings → Notifications → KDE Connect → Generic Notification)."
 fi
 
@@ -39,4 +51,3 @@ systemctl --user daemon-reload
 systemctl --user enable --now kdeconnect-scrcpy.service
 systemctl --user restart kdeconnect-scrcpy.service
 echo "Installed. Logs: journalctl --user -u kdeconnect-scrcpy -f"
-echo "If you still see duplicate popups, restart KDE Connect: kquitapp6 kdeconnectd; kdeconnectd &"
