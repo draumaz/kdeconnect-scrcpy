@@ -65,3 +65,7 @@ kdeconnect-scrcpy --test com.twitter.android
   stay on the current screen.
 - Wireless debugging turns itself off on networks the phone doesn't trust and after
   some reboots. If Open shows "Couldn't reach … over ADB", turn it back on.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).
