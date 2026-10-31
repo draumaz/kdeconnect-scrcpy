@@ -1,0 +1,21 @@
+pkgbase = kdeconnect-scrcpy-git
+	pkgdesc = Click Open on a KDE Connect phone notification to get a controllable scrcpy mirror of that app
+	pkgver = r9.fb46cdd
+	pkgrel = 1
+	url = https://github.com/draumaz/kdeconnect-scrcpy
+	install = kdeconnect-scrcpy.install
+	arch = any
+	license = GPL-3.0-or-later
+	makedepends = git
+	depends = python
+	depends = python-dbus
+	depends = python-gobject
+	depends = kdeconnect
+	depends = scrcpy
+	depends = android-tools
+	provides = kdeconnect-scrcpy
+	conflicts = kdeconnect-scrcpy
+	source = kdeconnect-scrcpy::git+https://github.com/draumaz/kdeconnect-scrcpy.git
+	sha256sums = SKIP
+
+pkgname = kdeconnect-scrcpy-git
