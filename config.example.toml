@@ -1,0 +1,20 @@
+# Copy to ~/.config/kdeconnect-scrcpy/config.toml. Restart the service after editing:
+#   systemctl --user restart kdeconnect-scrcpy
+
+# KDE Connect device IDs or names to handle (see `kdeconnect-cli -l`). Empty = all.
+devices = []
+
+# Android package names to never show.
+ignore_apps = ["com.android.systemui"]
+
+# Also show notifications KDE Connect marks as silent (low priority / synced on connect).
+include_silent = false
+
+# Force a specific ADB serial instead of auto-detecting, e.g. "192.168.0.150:5555".
+adb_serial = ""
+
+# Extra scrcpy flags. Some ideas:
+#   "--turn-screen-off"      keep the phone's own screen dark while mirroring
+#   "--new-display"          open in a separate virtual display (phone screen untouched)
+#   "--max-size=1600"        cap resolution for a smoother Wi-Fi stream
+scrcpy_args = ["--stay-awake"]

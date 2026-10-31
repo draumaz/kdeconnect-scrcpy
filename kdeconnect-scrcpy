@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+"""
+kdeconnect-scrcpy: phone notifications (via KDE Connect) that open a
+controllable scrcpy mirror of your phone, straight into the app that posted
+the notification.
+
+How it works:
+  1. Listen on the session bus for KDE Connect's `notificationPosted` signal.
+  2. Read the notification's properties (title, text, icon, and `internalId`,
+     which contains the Android package name).
+  3. Post our own desktop notification with an "Open" action.
+  4. When "Open" is clicked, find the phone over ADB (USB or Wireless
+     debugging) and run `scrcpy --start-app=<package>`.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import tomllib
+
+import dbus
+import dbus.mainloop.glib
+from gi.repository import GLib
+
+KDECONNECT = "org.kde.kdeconnect"
+NOTIFS_IFACE = "org.kde.kdeconnect.device.notifications"
+NOTIF_IFACE = "org.kde.kdeconnect.device.notifications.notification"
+DEVICE_IFACE = "org.kde.kdeconnect.device"
+DEVICES_PREFIX = "/modules/kdeconnect/devices/"
+
+FDN = "org.freedesktop.Notifications"
+FDN_PATH = "/org/freedesktop/Notifications"
+
+CONFIG_PATH = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+    "kdeconnect-scrcpy", "config.toml",
+)
+
+DEFAULT_CONFIG = {
+    # KDE Connect device IDs or names to handle. Empty = all devices.
+    "devices": [],
+    # Android package names to ignore entirely.
+    "ignore_apps": [],
+    # KDE Connect marks some notifications silent (e.g. ones synced on
+    # connect, or low-priority ones). KDE Connect doesn't pop those up either.
+    "include_silent": False,
+    # Force a specific ADB serial (e.g. "192.168.0.150:5555" or a USB serial).
+    "adb_serial": "",
+    # Extra arguments passed to scrcpy.
+    "scrcpy_args": ["--stay-awake"],
+}
+
+
+def log(*args):
+    print(*args, file=sys.stderr, flush=True)
+
+
+def load_config():
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        with open(CONFIG_PATH, "rb") as f:
+            cfg.update(tomllib.load(f))
+    except FileNotFoundError:
+        pass
+    except tomllib.TOMLDecodeError as e:
+        log(f"config error in {CONFIG_PATH}: {e}; using defaults")
+    return cfg
+
+
+# --------------------------------------------------------------------------
+# ADB / scrcpy
+# --------------------------------------------------------------------------
+
+def adb(*args, timeout=10):
+    try:
+        return subprocess.run(
+            ["adb", *args], capture_output=True, text=True, timeout=timeout
+        ).stdout
+    except subprocess.TimeoutExpired:
+        return ""
+
+
+def adb_online_devices():
+    devs = []
+    for line in adb("devices").splitlines()[1:]:
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[1] == "device":
+            devs.append(parts[0])
+    return devs
+
+
+def adb_connect(target):
+    out = adb("connect", target, timeout=15)
+    return "connected" in out and "failed" not in out
+
+
+def find_adb_serial(cfg, addresses):
+    """Return an ADB serial for the phone, connecting over Wi-Fi if needed."""
+    if cfg["adb_serial"]:
+        serial = cfg["adb_serial"]
+        if serial not in adb_online_devices() and ":" in serial:
+            adb_connect(serial)
+        return serial if serial in adb_online_devices() else None
+
+    def pick(devs):
+        # A wireless connection whose IP matches what KDE Connect sees.
+        for d in devs:
+            if ":" in d and d.rsplit(":", 1)[0] in addresses:
+                return d
+        # USB devices, then mDNS auto-connected ones. The same phone can show
+        # up under several serials, so only guess when it's unambiguous.
+        usb = [d for d in devs if ":" not in d and "._adb-tls-connect" not in d]
+        if len(usb) == 1:
+            return usb[0]
+        if len(devs) == 1:
+            return devs[0]
+        return None
+
+    serial = pick(adb_online_devices())
+    if serial:
+        return serial
+
+    # Look for the phone advertising Wireless debugging over mDNS.
+    for line in adb("mdns", "services").splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[1].startswith("_adb-tls-connect"):
+            target = parts[2]
+            if target.rsplit(":", 1)[0] in addresses and adb_connect(target):
+                return target
+
+    # Legacy `adb tcpip 5555` mode.
+    for addr in addresses:
+        if adb_connect(f"{addr}:5555"):
+            return f"{addr}:5555"
+
+    return pick(adb_online_devices())
+
+
+class Mirror:
+    """Tracks one scrcpy process per ADB serial."""
+
+    def __init__(self, app):
+        self.app = app
+        self.procs = {}
+        self.lock = threading.Lock()
+
+    def open(self, device_name, addresses, package):
+        threading.Thread(
+            target=self._open, args=(device_name, addresses, package), daemon=True
+        ).start()
+
+    def _open(self, device_name, addresses, package):
+        cfg = self.app.cfg
+        serial = find_adb_serial(cfg, addresses)
+        if not serial:
+            self.app.error(
+                f"Couldn't reach {device_name} over ADB",
+                "Plug it in via USB, or turn on Developer options → Wireless "
+                "debugging (pair once with `adb pair`).",
+            )
+            return
+
+        with self.lock:
+            proc = self.procs.get(serial)
+            if proc and proc.poll() is None:
+                # Mirror already open: just switch the phone to the app.
+                if package:
+                    adb("-s", serial, "shell", "monkey", "-p", package,
+                        "-c", "android.intent.category.LAUNCHER", "1")
+                return
+
+            cmd = ["scrcpy", "-s", serial, f"--window-title={device_name}",
+                   *cfg["scrcpy_args"]]
+            if package:
+                cmd.append(f"--start-app={package}")
+            log("running:", " ".join(cmd))
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, text=True)
+            self.procs[serial] = proc
+
+        started = time.monotonic()
+        _, err = proc.communicate()
+        if err:
+            log(err.rstrip())
+        if proc.returncode not in (0, None) and time.monotonic() - started < 10:
+            lines = [l for l in err.splitlines() if l.startswith("ERROR")]
+            self.app.error("scrcpy failed to start",
+                           lines[-1] if lines else f"exit code {proc.returncode}")
+
+
+# --------------------------------------------------------------------------
+# D-Bus glue
+# --------------------------------------------------------------------------
+
+class App:
+    def __init__(self):
+        self.cfg = load_config()
+        self.bus = dbus.SessionBus()
+        self.notifier = dbus.Interface(self.bus.get_object(FDN, FDN_PATH), FDN)
+        self.mirror = Mirror(self)
+        # (device_id, public_id) -> desktop notification id, and the reverse
+        self.by_phone = {}
+        self.by_desktop = {}
+
+        for sig, handler in (("notificationPosted", self.on_posted),
+                             ("notificationUpdated", self.on_posted),
+                             ("notificationRemoved", self.on_removed),
+                             ("allNotificationsRemoved", self.on_all_removed)):
+            self.bus.add_signal_receiver(
+                handler, signal_name=sig, dbus_interface=NOTIFS_IFACE,
+                bus_name=KDECONNECT, path_keyword="path")
+
+        self.bus.add_signal_receiver(
+            self.on_action, signal_name="ActionInvoked",
+            dbus_interface=FDN, path=FDN_PATH)
+        self.bus.add_signal_receiver(
+            self.on_replied, signal_name="NotificationReplied",
+            dbus_interface=FDN, path=FDN_PATH)
+        self.bus.add_signal_receiver(
+            self.on_closed, signal_name="NotificationClosed",
+            dbus_interface=FDN, path=FDN_PATH)
+
+    # -- helpers -----------------------------------------------------------
+
+    def props(self, path, iface):
+        obj = self.bus.get_object(KDECONNECT, path)
+        return obj.GetAll(iface, dbus_interface=dbus.PROPERTIES_IFACE)
+
+    @staticmethod
+    def device_id(path):
+        return path[len(DEVICES_PREFIX):].split("/")[0]
+
+    def device_info(self, device_id):
+        p = self.props(DEVICES_PREFIX + device_id, DEVICE_IFACE)
+        return str(p.get("name", "Phone")), [str(a) for a in p.get("reachableAddresses", [])]
+
+    def error(self, title, body):
+        def post():
+            self.notifier.Notify("Phone Mirroring", 0, "dialog-error", title,
+                                 body, [], {}, -1)
+        GLib.idle_add(post)
+
+    # -- KDE Connect signals -------------------------------------------------
+
+    def on_posted(self, public_id, path):
+        public_id = str(public_id)
+        dev = self.device_id(path)
+        key = (dev, public_id)
+        try:
+            n = self.props(f"{path}/{public_id}", NOTIF_IFACE)
+            name, addresses = self.device_info(dev)
+        except dbus.DBusException as e:
+            log(f"couldn't read notification {public_id}: {e}")
+            return
+
+        if self.cfg["devices"] and dev not in self.cfg["devices"] \
+                and name not in self.cfg["devices"]:
+            return
+        if bool(n.get("silent")) and not self.cfg["include_silent"] \
+                and key not in self.by_phone:
+            return
+
+        # internalId is Android's StatusBarNotification key:
+        # "<userId>|<package>|<id>|<tag>|<uid>"
+        parts = str(n.get("internalId", "")).split("|")
+        package = parts[1] if len(parts) > 1 else ""
+        if package in self.cfg["ignore_apps"]:
+            return
+
+        app_name = str(n.get("appName", "")) or package or "Phone"
+        title = str(n.get("title", "")) or app_name
+        text = str(n.get("text", ""))
+        icon = str(n.get("iconPath", "")) if n.get("hasIcon") else ""
+        if icon and not os.path.exists(icon):
+            icon = ""
+
+        actions = ["default", "Open", "open", "Open"]
+        hints = {"x-kde-origin-name": dbus.String(name)}
+        if str(n.get("replyId", "")):
+            actions += ["inline-reply", "Reply"]
+            hints["x-kde-reply-placeholder-text"] = dbus.String(f"Reply via {name}…")
+
+        replaces = self.by_phone.get(key, 0)
+        nid = int(self.notifier.Notify(
+            app_name, dbus.UInt32(replaces), icon or "smartphone", title, text,
+            actions, hints, -1))
+        self.by_phone[key] = nid
+        self.by_desktop[nid] = {"key": key, "path": f"{path}/{public_id}",
+                                "package": package, "device": name,
+                                "addresses": addresses}
+
+    def on_removed(self, public_id, path):
+        nid = self.by_phone.pop((self.device_id(path), str(public_id)), None)
+        if nid is not None:
+            self.by_desktop.pop(nid, None)
+            self.notifier.CloseNotification(dbus.UInt32(nid))
+
+    def on_all_removed(self, path):
+        dev = self.device_id(path)
+        for key in [k for k in self.by_phone if k[0] == dev]:
+            self.on_removed(key[1], path)
+
+    # -- desktop notification signals ----------------------------------------
+
+    def on_action(self, nid, action):
+        info = self.by_desktop.get(int(nid))
+        if info and action in ("default", "open"):
+            self.mirror.open(info["device"], info["addresses"], info["package"])
+
+    def on_replied(self, nid, text):
+        info = self.by_desktop.get(int(nid))
+        if info:
+            obj = self.bus.get_object(KDECONNECT, info["path"])
+            obj.sendReply(text, dbus_interface=NOTIF_IFACE)
+
+    def on_closed(self, nid, reason):
+        info = self.by_desktop.pop(int(nid), None)
+        if info:
+            self.by_phone.pop(info["key"], None)
+
+
+def main():
+    for tool in ("adb", "scrcpy"):
+        if not shutil.which(tool):
+            log(f"warning: `{tool}` not found in PATH")
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    App()
+    log("listening for KDE Connect notifications…")
+    GLib.MainLoop().run()
+
+
+if __name__ == "__main__":
+    main()
