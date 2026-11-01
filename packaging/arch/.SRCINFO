@@ -1,6 +1,6 @@
 pkgbase = kdeconnect-scrcpy-git
 	pkgdesc = Click Open on a KDE Connect phone notification to get a controllable scrcpy mirror of that app
-	pkgver = r9.fb46cdd
+	pkgver = r11.3650837
 	pkgrel = 1
 	url = https://github.com/draumaz/kdeconnect-scrcpy
 	install = kdeconnect-scrcpy.install
