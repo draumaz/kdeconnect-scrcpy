@@ -50,6 +50,9 @@ DEFAULT_CONFIG = {
     "include_silent": False,
     # Force a specific ADB serial (e.g. "192.168.0.150:5555" or a USB serial).
     "adb_serial": "",
+    # Turn the phone's own screen off while it's mirrored (scrcpy -S), and
+    # back on when the mirror window is closed.
+    "turn_screen_off": True,
     # Extra arguments passed to scrcpy.
     "scrcpy_args": ["--stay-awake"],
 }
@@ -183,6 +186,10 @@ class Mirror:
 
             cmd = ["scrcpy", "-s", serial, f"--window-title={device_name}",
                    *cfg["scrcpy_args"]]
+            screen_off = cfg["turn_screen_off"] or any(
+                a in ("-S", "--turn-screen-off") for a in cfg["scrcpy_args"])
+            if cfg["turn_screen_off"]:
+                cmd.append("-S")
             if package:
                 cmd.append(f"--start-app={package}")
             log("running:", " ".join(cmd))
@@ -194,6 +201,10 @@ class Mirror:
         _, err = proc.communicate()
         if err:
             log(err.rstrip())
+        if screen_off:
+            # scrcpy restores the display power mode on close, but not if it
+            # died or the phone dozed off meanwhile; wake it to be sure.
+            adb("-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
         if proc.returncode not in (0, None) and time.monotonic() - started < 10:
             lines = [l for l in err.splitlines() if l.startswith("ERROR")]
             self.app.error("scrcpy failed to start",

@@ -13,8 +13,11 @@ include_silent = false
 # Force a specific ADB serial instead of auto-detecting, e.g. "192.168.0.150:5555".
 adb_serial = ""
 
+# Turn the phone's own screen off while it's mirrored (scrcpy -S), and back on
+# when you close the mirror window.
+turn_screen_off = true
+
 # Extra scrcpy flags. Some ideas:
-#   "--turn-screen-off"      keep the phone's own screen dark while mirroring
 #   "--new-display"          open in a separate virtual display (phone screen untouched)
 #   "--max-size=750"         smaller window (default fills the screen height). Prefer this
 #                            over --window-height: the phone sends video at that size, so
